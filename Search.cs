@@ -1,4 +1,5 @@
-﻿using System;
+using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Threading;
 using System.Diagnostics;
@@ -17,8 +18,8 @@ namespace ProfitFinderS
         private const string websiteBaseGloves = "https://csgostash.com/glove/";
         private const string xPathTitle = "/html/head/title";
         private const string xPathWear = "//div[@id='prices']/div[@class='btn-group-sm btn-group-justified']";
-        private const string xPathSpecification = "/html/body/div[2]/div[3]/div[2]/div/div[1]/div[1]/a[1]/div";
-        private const string xPathSpecificationGloves = "/html/body/div[2]/div[4]/div[2]/div/div[1]/div[1]/div[1]";
+        private const string xPathSpecWeapons = "/html/body/div[2]/div[3]/div[2]/div/div[1]/div[1]/a[1]/div";
+        private const string xPathSpecGloves = "/html/body/div[2]/div[4]/div[2]/div/div[1]/div[1]/div[1]";
         private const string xPathOffsetPrice = "//span[@class='pull-right']";
         private const string xPathOffsetStatTrak = "//span[@class='pull-left price-details-st']";
         private const string xPathOffsetSouvenir = "//span[@class='pull-left price-details-souv']";
@@ -29,6 +30,18 @@ namespace ProfitFinderS
         private float minPrice;
         private float maxPrice;
         private int resultNumber;
+
+        // Dictionary with attribute value keys
+        private Dictionary<string, string> colorDict = new Dictionary<string, string>()
+        {
+            { "quality color-consumer", "#b0c3d8" },
+            { "quality color-industrial", "#6098d7" },
+            { "quality color-milspec", "#4e6afc" },
+            { "quality color-restricted", "#8949fb" },
+            { "quality color-classified", "#d230e3" },
+            { "quality color-covert", "#ea4a4e" },
+            { "quality color-contraband", "#fead45" }
+        };
 
         public void Start(SearchConfiguration sc)
         {
@@ -42,20 +55,20 @@ namespace ProfitFinderS
 
             // Setup various UI elements
             sc.progressBar.Invoke((Action)delegate {
-                sc.progressBar.Minimum = sc.minSearchIndex;
-                sc.progressBar.Maximum = sc.maxSearchIndex;
+                sc.progressBar.Minimum = sc.minSearchIndexWeapons;
+                sc.progressBar.Maximum = sc.maxSearchIndexWeapons;
             });
             sc.labelResults.Invoke((Action)delegate {
-                sc.labelResults.Text = $"Results ({minPrice:c2} - {maxPrice:c2)}) | Found ({resultNumber})";
+                sc.labelResults.Text = $"Results ({minPrice:c2} - {maxPrice:c2}) | Found ({resultNumber})";
             });
             sc.treeView.Invoke((Action)delegate {
                 sc.treeView.NodeMouseDoubleClick += new TreeNodeMouseClickEventHandler(OpenWebpage);
             });
 
             // Iterate through all the specified website indexes for weapons if specified
-            if (sc.maxSearchIndex > 0)
-                for (int i = sc.minSearchIndex; i < sc.maxSearchIndex; i++)
-                    ProcessWebpageAtIndex(sc, websiteBaseGloves, i, xPathSpecification);
+            if (sc.maxSearchIndexWeapons > 0)
+                for (int i = sc.minSearchIndexWeapons; i < sc.maxSearchIndexWeapons; i++)
+                    ProcessWebpageAtIndex(sc, i, 0);
 
             // Setup progress bar for glove search
             sc.progressBar.Invoke((Action)delegate {
@@ -66,21 +79,22 @@ namespace ProfitFinderS
             // Iterate through all the specified website indexes for gloves
             if (sc.maxSearchIndexGloves > 0)
                 for (int i = sc.minSearchIndexGloves; i < sc.maxSearchIndexGloves; i++)
-                    ProcessWebpageAtIndex(sc, websiteBaseGloves, i, xPathSpecificationGloves);
+                    ProcessWebpageAtIndex(sc, i, 1);
 
             // Update UI for completed status
             sc.progressBar.Invoke((Action)delegate{sc.progressBar.Value = sc.minSearchIndexGloves;});
-            sc.labelProgress.Invoke((Action)delegate{sc.labelProgress.Text = "Complete";});
+            sc.labelProgress.Invoke((Action)delegate{sc.labelProgress.Text = "Status: Complete";});
         }
 
-        private void ProcessWebpageAtIndex(SearchConfiguration sc, string websiteBase, int index, string xPathSpec)
+        private void ProcessWebpageAtIndex(SearchConfiguration sc, int index, byte searchType)
         {
             // Delay thread to keep from spamming the website with requests
             Random random = new Random();
             Thread.Sleep(random.Next(sc.minRequestDelay, sc.maxRequestDelay));
 
-            // Get HTML and continue to next page if this on doesn't exist
-            HtmlAgilityPack.HtmlDocument document = new HtmlWeb().Load(websiteBase + index);
+            // Get HTML and continue to next page if this one doesn't exist
+            string url = (searchType == 0 ? websiteBaseWeapons : websiteBaseGloves) + index;
+            HtmlAgilityPack.HtmlDocument document = new HtmlWeb().Load(url);
             if (GetInnerText(document.DocumentNode, xPathTitle) == "Not Found") return;
 
             // Get the name of the currect skin
@@ -102,10 +116,11 @@ namespace ProfitFinderS
                 if (price > minPrice && price < maxPrice)
                 {
                     // Compile node name
-                    string variant = "";
-                    variant = $"{GetInnerText(node, node.XPath + xPathOffsetStatTrak)} ";
-                    variant = $"{GetInnerText(node, node.XPath + xPathOffsetSouvenir)} ";
-                    string completeSkinName = $"{skinName} ({variant}{GetInnerText(node, node.XPath + xPathOffsetCondition)})";
+                    string sv = GetInnerText(node, node.XPath + xPathOffsetStatTrak);
+                    if (sv.Length > 0) sv += ' ';
+                    string st = GetInnerText(node, node.XPath + xPathOffsetSouvenir);
+                    if (st.Length > 0) st += ' ';
+                    string completeSkinName = $"{skinName} ({sv}{st}{GetInnerText(node, node.XPath + xPathOffsetCondition)})";
 
                     // Create and deploy tree node
                     TreeNode treeNode = new TreeNode(completeSkinName);
@@ -113,7 +128,10 @@ namespace ProfitFinderS
                     treeNode.Nodes.Add($"profit: {price * (precentReturn / 100) - sc.buyOrderAmount:c2}");
                     treeNode.Nodes.Add(GetAttributeValue(node, node.XPath + xPathOffsetLink, "href"));
                     if (sc.useColor)
+                    {
+                        string xPathSpec = searchType == 0 ? xPathSpecWeapons : xPathSpecGloves;
                         treeNode.ForeColor = GetColor(GetAttributeValue(node, xPathSpec, "class"));
+                    }
                     if (treeNode != null)
                         sc.treeView.Invoke((Action)delegate { sc.treeView.Nodes.Add(treeNode); });
 
@@ -126,9 +144,12 @@ namespace ProfitFinderS
             sc.progressBar.Invoke((Action)delegate { sc.progressBar.Value = index; });
             sc.labelProgress.Invoke((Action)delegate
             {
-                float min = index - sc.minSearchIndex;
-                float max = sc.maxSearchIndex - sc.minSearchIndex;
-                sc.labelProgress.Text = $"({min / max * 100:n2}%) {min} / {max}";
+                int minSearchIndex = searchType == 0 ? sc.minSearchIndexWeapons : sc.minSearchIndexGloves;
+                int maxSearchIndex = searchType == 0 ? sc.maxSearchIndexWeapons : sc.maxSearchIndexGloves;
+                float min = index - minSearchIndex;
+                float max = maxSearchIndex - minSearchIndex;
+                string searchTypeName = searchType == 0 ? "Weapons" : "Gloves";
+                sc.labelProgress.Text = $"Status: {searchTypeName} {min} / {max} [{min / max * 100:n2}%]";
             });
             sc.labelResults.Invoke((Action)delegate {
                 sc.labelResults.Text = $"Results ({minPrice:c2} - {maxPrice:c2}) | Found ({resultNumber})";
@@ -159,7 +180,7 @@ namespace ProfitFinderS
                 MessageBox.Show("minRequestDelay must be greater than maxRequestDelay", "Value Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return false;
             }
-            if (sc.minSearchIndex > sc.maxSearchIndex)
+            if (sc.minSearchIndexWeapons > sc.maxSearchIndexWeapons)
             {
                 MessageBox.Show("(Weapon Skins) minSearchIndex must be greater than maxSearchIndex", "Value Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return false;
@@ -182,25 +203,8 @@ namespace ProfitFinderS
         // Gets color based on attribute value
         private Color GetColor(string className)
         {
-            switch (className)
-            {
-                case "quality color-consumer":
-                    return ColorTranslator.FromHtml("#b0c3d8");
-                case "quality color-industrial":
-                    return ColorTranslator.FromHtml("#6098d7");
-                case "quality color-milspec":
-                    return ColorTranslator.FromHtml("#4e6afc");
-                case "quality color-restricted":
-                    return ColorTranslator.FromHtml("#8949fb");
-                case "quality color-classified":
-                    return ColorTranslator.FromHtml("#d230e3");
-                case "quality color-covert":
-                    return ColorTranslator.FromHtml("#ea4a4e");
-                case "quality color-contraband":
-                    return ColorTranslator.FromHtml("#fead45");
-                default:
-                    return Color.Black;
-            }
+            try { return ColorTranslator.FromHtml(colorDict[className]); }
+            catch { return Color.Black; }
         }
     }
 }
